@@ -9,17 +9,38 @@ let package = Package(
         // Products define the executables and libraries produced by a package, and make them visible to other packages.
         .library(
             name: "PerfectNIOCompat",
-            targets: ["PerfectNIOCompat"]),
+            targets: ["PerfectNIOCompat",
+					  "PerfectHTTPC",
+					  "PerfectHTTPServerC",
+					  "PerfectMustacheC",
+					  "PerfectWebSocketsC"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/PerfectlySoft/Perfect-NIO.git", .branch("master")),
+		.package(url: "https://github.com/PerfectlySoft/Perfect-NIO.git", .branch("master")),
+		.package(url: "https://github.com/PerfectlySoft/Perfect-Mustache.git", .branch("4.0-dev")),
+		.package(url: "https://github.com/PerfectlySoft/PerfectLib.git", from: "3.0.0"),
     ],
     targets: [
-        // Targets are the basic building blocks of a package. A target can define a module or a test suite.
-        // Targets can depend on other targets in this package, and on products in packages which this package depends on.
         .target(
             name: "PerfectNIOCompat",
-            dependencies: ["PerfectNIO"]),
+            dependencies: ["PerfectNIO",
+						   "PerfectHTTPServerC",
+						   "PerfectHTTPC",
+						   "PerfectMustacheC",
+						   "PerfectWebSocketsC"]),
+		.target(
+			name: "PerfectHTTPC",
+			dependencies: ["PerfectLib", "PerfectNIO"]),
+		.target(
+			name: "PerfectHTTPServerC",
+			dependencies: ["PerfectHTTPC", "PerfectNIO", "PerfectLib"]),
+		.target(
+			name: "PerfectMustacheC",
+			dependencies: ["PerfectMustache",
+						   "PerfectHTTPC"]),
+		.target(
+			name: "PerfectWebSocketsC",
+			dependencies: ["PerfectHTTPC"]),
         .testTarget(
             name: "PerfectNIOCompatTests",
             dependencies: ["PerfectNIOCompat"]),
