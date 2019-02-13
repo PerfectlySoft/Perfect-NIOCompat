@@ -6,8 +6,11 @@ In Package.swift:
 `.package(url: "https://github.com/PerfectlySoft/Perfect-NIOCompat.git", .branch("master"))`
 
 <strike>`.package(url: "https://github.com/PerfectlySoft/Perfect-HTTP.git", ...`</strike>
+
 <strike>`.package(url: "https://github.com/PerfectlySoft/Perfect-HTTPServer.git", ...`</strike>
+
 <strike>`.package(url: "https://github.com/PerfectlySoft/Perfect-Mustache.git", ...`</strike>
+
 <strike>`.package(url: "https://github.com/PerfectlySoft/Perfect-WebSockets.git", ...`</strike>
 
 Use PerfectCURL, PerfectSMTP, PerfectNotifications `from: "4.0.0"`
