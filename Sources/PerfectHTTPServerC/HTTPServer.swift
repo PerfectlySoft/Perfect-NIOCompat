@@ -176,6 +176,8 @@ class HTTP11Response: HTTPOutput, HTTPResponse {
 				promise.futureResult.whenSuccess { _ in pcb(true) }
 				promise.futureResult.whenFailure { _ in pcb(false) }
 				promise.succeed(result: .byteBuffer(b))
+			} else if hasCompleted {
+				promise.succeed(result: nil)
 			} else {
 				// no data but push was called
 				// wait for another push/completed
