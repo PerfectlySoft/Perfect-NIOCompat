@@ -29,44 +29,121 @@ import enum PerfectHTTPC.HTTPResponseStatus
 import struct PerfectHTTPC.Routes
 
 class HTTP11Request: HTTPRequest {
-	var method: HTTPMethod = .get
-	var path: String = ""
-	var pathComponents: [String] = []
-	var queryParams: [(String, String)] = []
+	let master: PerfectNIO.HTTPRequest
+	
+	var method: HTTPMethod {
+		return master.method.compat
+	}
+	let path: String
+	var pathComponents: [String] { return path.split(separator: "/").map(String.init) }
+	var queryParams: [(String, String)] {
+		guard let qd = master.searchArgs else {
+			return []
+		}
+		return qd.map { $0 }
+	}
 	var protocolVersion: (Int, Int) = (1, 1)
-	var remoteAddress: (host: String, port: UInt16) = ("", 0)
-	var serverAddress: (host: String, port: UInt16) = ("", 0)
+	
+	private func addrTup(_ addr: SocketAddress) -> (String, UInt16) {
+		switch addr {
+		case .v4(let v4):
+			return (v4.host, addr.port ?? 0)
+		case .v6(let v6):
+			return (v6.host, addr.port ?? 0)
+		case .unixDomainSocket(let u):
+			return ("\(u)", 0)
+		}
+	}
+	var remoteAddress: (host: String, port: UInt16) {
+		guard let addr = master.remoteAddress else {
+			return ("", 0)
+		}
+		return addrTup(addr)
+	}
+	var serverAddress: (host: String, port: UInt16) {
+		guard let addr = master.localAddress else {
+			return ("", 0)
+		}
+		return addrTup(addr)
+	}
 	var serverName: String = ""
 	var documentRoot: String = ""
 	var urlVariables: [String : String] = [:]
 	var scratchPad: [String : Any] = [:]
-	private var headerStore = Dictionary<HTTPRequestHeader.Name, [UInt8]>()
+	
 	var headers: AnyIterator<(HTTPRequestHeader.Name, String)> {
-		var g = headerStore.makeIterator()
+		var g = master.headers.makeIterator()
 		return AnyIterator<(HTTPRequestHeader.Name, String)> {
 			guard let n = g.next() else {
 				return nil
 			}
-			return (n.key, UTF8Encoding.encode(bytes: n.value))
+			return (HTTPRequestHeader.Name.fromStandard(name: n.name),
+					n.value)
 		}
 	}
-	var postParams: [(String, String)] = []
-	var postBodyBytes: [UInt8]? = nil
-	var postBodyString: String? = nil
-	var postFileUploads: [MimeReader.BodySpec]? = nil
+	
+	private var workingBuffer: [UInt8] = []
+	var mimes: MimeReader?
+	var postQueryDecoder: QueryDecoder?
+	
+	lazy var postParams: [(String, String)] = {
+		if let mime = mimes {
+			return mime.bodySpecs.filter { $0.file == nil }.map { ($0.fieldName, $0.fieldValue) }
+		} else if let qd = postQueryDecoder {
+			return qd.map { $0 }
+		}
+		return [(String, String)]()
+	}()
+	var postBodyBytes: [UInt8]? {
+		get {
+			if let _ = mimes {
+				return nil
+			}
+			return workingBuffer
+		}
+		set {
+			if let nv = newValue {
+				workingBuffer = nv
+			} else {
+				workingBuffer.removeAll()
+			}
+		}
+	}
+	var postBodyString: String? {
+		guard let bytes = postBodyBytes else {
+			return nil
+		}
+		if bytes.isEmpty {
+			return ""
+		}
+		return UTF8Encoding.encode(bytes: bytes)
+	}
+	var postFileUploads: [MimeReader.BodySpec]? {
+		guard let mimes = self.mimes else {
+			return nil
+		}
+		return mimes.bodySpecs
+	}
+	
+	init(master: PerfectNIO.HTTPRequest, path: String) {
+		self.master = master
+		print("HTTP11Request path \(path)")
+		self.path = path.hasPrefix("/") ? path : ("/" + path)
+	}
 	func header(_ named: HTTPRequestHeader.Name) -> String? {
-		return nil
-	}
-	func addHeader(_ named: HTTPRequestHeader.Name, value: String) {
-		
-	}
-	func setHeader(_ named: HTTPRequestHeader.Name, value: String) {
-		
+		return master.headers[named.standardName].first
 	}
 }
 
-class HTTP11Response: HTTPResponse {
+class HTTP11Response: HTTPOutput, HTTPResponse {
 	let request: HTTPRequest
+	
+	var headPromise: EventLoopPromise<HTTPOutput>?
+	var bodyPromise: EventLoopPromise<IOData?>?
+	var bodyAllocator: ByteBufferAllocator?
+	var pushCallback: ((Bool) -> ())?
+	var hasCompleted = false
+	
 	var status: HTTPResponseStatus = .ok
 	var isStreaming: Bool = false
 	var bodyBytes: [UInt8] = []
@@ -77,26 +154,103 @@ class HTTP11Response: HTTPResponse {
 			g.next()
 		}
 	}
-	init(request: HTTPRequest) {
+	var handlers: IndexingIterator<[RequestHandler]>?
+	init(request: HTTPRequest, promise: EventLoopPromise<HTTPOutput>) {
 		self.request = request
+		self.headPromise = promise
 	}
-	func header(_ named: HTTPResponseHeader.Name) -> String? {
-		return nil
+	
+	override func head(request: HTTPRequestInfo) -> HTTPHead? {
+		let headers = HTTPHeaders(headerStore.map { ($0.0.standardName, $0.1) })
+		let nstatus = NIOHTTP1.HTTPResponseStatus(statusCode: status.code)
+		return HTTPHead(status: nstatus, headers: headers)
 	}
-	func addHeader(_ named: HTTPResponseHeader.Name, value: String) -> Self {
-		return self
-	}
-	func setHeader(_ named: HTTPResponseHeader.Name, value: String) -> Self {
-		return self
+	override func body(promise: EventLoopPromise<IOData?>, allocator: ByteBufferAllocator) {
+		if let pcb = pushCallback {
+			pushCallback = nil
+			// push/completed has been called
+			if !bodyBytes.isEmpty {
+				var b = allocator.buffer(capacity: bodyBytes.count)
+				b.write(bytes: bodyBytes)
+				bodyBytes.removeAll()
+				promise.futureResult.whenSuccess { _ in pcb(true) }
+				promise.futureResult.whenFailure { _ in pcb(false) }
+				promise.succeed(result: .byteBuffer(b))
+			} else {
+				// no data but push was called
+				// wait for another push/completed
+				bodyPromise = promise
+				bodyAllocator = allocator
+				pcb(true)
+			}
+		} else if hasCompleted {
+			promise.succeed(result: nil)
+		} else {
+			// wait for push/completed
+			bodyPromise = promise
+			bodyAllocator = allocator
+		}
 	}
 	func push(callback: @escaping (Bool) -> ()) {
-		
+		pushCallback = callback
+		if let hp = headPromise {
+			// head has not been sent yet
+			headPromise = nil
+			// body will be called to finish up
+			hp.succeed(result: self)
+		} else if let bp = bodyPromise, let a = bodyAllocator {
+			// head has been sent
+			// body was requested
+			bodyPromise = nil
+			bodyAllocator = nil
+			body(promise: bp, allocator: a)
+		} else {
+			// we wait for body to be called
+		}
+	}
+	
+	func header(_ named: HTTPResponseHeader.Name) -> String? {
+		for (n, v) in headerStore where n == named {
+			return v
+		}
+		return nil
+	}
+	@discardableResult
+	func addHeader(_ name: HTTPResponseHeader.Name, value: String) -> Self {
+		headerStore.append((name, value))
+		if case .contentLength = name {
+//			contentLengthSet = true
+		}
+		return self
+	}
+	@discardableResult
+	func setHeader(_ name: HTTPResponseHeader.Name, value: String) -> Self {
+		var fi = [Int]()
+		for i in 0..<headerStore.count {
+			let (n, _) = headerStore[i]
+			if n == name {
+				fi.append(i)
+			}
+		}
+		fi = fi.reversed()
+		for i in fi {
+			headerStore.remove(at: i)
+		}
+		return addHeader(name, value: value)
 	}
 	func next() {
-		
+		if let n = handlers?.next() {
+			n(request, self)
+		} else {
+			completed()
+		}
 	}
 	func completed() {
-		
+		hasCompleted = true
+		push {
+			_ in
+			
+		}
 	}
 }
 
@@ -155,8 +309,8 @@ public class HTTPServer: ServerInstance {
 	}
 	public var alpnSupport = [ALPNSupport.http11]
 
-	private var boundRoutes: BoundRoutes?
-	private var listeningRoutes: ListeningRoutes?
+	var boundRoutes: BoundRoutes?
+	var listeningRoutes: ListeningRoutes?
 	
 	/// Initialize the server object.
 	public init() {}
@@ -166,19 +320,53 @@ public class HTTPServer: ServerInstance {
 		self.routes.add(routes)
 	}
 	
+	private func runRequest(_ request: HTTP11Request, promise: EventLoopPromise<HTTPOutput>) {
+		let response = HTTP11Response(request: request, promise: promise)
+		if let nav = routeNavigator,
+			let handlers = nav.findHandlers(pathComponents: request.pathComponents, webRequest: request) {
+			response.handlers = handlers.makeIterator()
+			response.next()
+		} else {
+			response.status = .notFound
+			response.appendBody(string: "The file \(request.path) was not found.")
+			response.completed()
+		}
+	}
+	
+	private func handleBody(_ request: HTTP11Request, _ body: HTTPRequestContentType) -> HTTP11Request {
+		switch body {
+		case .none:
+			()
+		case .multiPartForm(let m):
+			request.mimes = m
+		case .urlForm(let q):
+			request.postQueryDecoder = q
+		case .other(let b):
+			request.postBodyBytes = b
+		}
+		return request
+	}
+	
 	/// Bind the server to the designated address/port
 	public func bind() throws {
-		
+		routeNavigator = routes.navigator
+		boundRoutes = try root()
+			.trailing(HTTP11Request.init)
+			.readBody(handleBody)
+			.async(runRequest)
+			.bind(port: Int(serverPort),
+				  address: serverAddress, tls: nil)
 	}
 	
 	/// Start the server. Does not return until the server terminates.
 	public func start() throws {
-		
+		listeningRoutes = try boundRoutes?.listen()
+		try listeningRoutes?.wait()
 	}
 	
 	/// Stop the server by closing the accepting TCP socket. Calling this will cause the server to break out of the otherwise blocking `start` function.
 	public func stop() {
-		
+		listeningRoutes?.stop()
 	}
 	
 	/// Set the request filters. Each is provided along with its priority.
@@ -219,5 +407,80 @@ public class HTTPServer: ServerInstance {
 			responseFilters.append(low)
 		}
 		return self
+	}
+}
+
+extension PerfectNIO.HTTPMethod {
+	var compat: PerfectHTTPC.HTTPMethod {
+		switch self {
+		case .GET:
+			return .get
+		case .PUT:
+			return .put
+		case .HEAD:
+			return .head
+		case .POST:
+			return .post
+		case .PATCH:
+			return .patch
+		case .TRACE:
+			return .trace
+		case .DELETE:
+			return .delete
+		case .CONNECT:
+			return .connect
+		case .OPTIONS:
+			return .options
+		case .ACL:
+			return .custom("ACL")
+		case .COPY:
+			return .custom("COPY")
+		case .LOCK:
+			return .custom("LOCK")
+		case .MOVE:
+			return .custom("MOVE")
+		case .BIND:
+			return .custom("BIND")
+		case .LINK:
+			return .custom("LINK")
+		case .MKCOL:
+			return .custom("MKCOL")
+		case .MERGE:
+			return .custom("MERGE")
+		case .PURGE:
+			return .custom("PURGE")
+		case .NOTIFY:
+			return .custom("NOTIFY")
+		case .SEARCH:
+			return .custom("SEARCH")
+		case .UNLOCK:
+			return .custom("UNLOCK")
+		case .REBIND:
+			return .custom("REBIND")
+		case .UNBIND:
+			return .custom("UNBIND")
+		case .REPORT:
+			return .custom("REPORT")
+		case .UNLINK:
+			return .custom("UNLINK")
+		case .MSEARCH:
+			return .custom("MSEARCH")
+		case .PROPFIND:
+			return .custom("PROPFIND")
+		case .CHECKOUT:
+			return .custom("CHECKOUT")
+		case .PROPPATCH:
+			return .custom("PROPPATCH")
+		case .SUBSCRIBE:
+			return .custom("SUBSCRIBE")
+		case .MKCALENDAR:
+			return .custom("MKCALENDAR")
+		case .MKACTIVITY:
+			return .custom("MKACTIVITY")
+		case .UNSUBSCRIBE:
+			return .custom("UNSUBSCRIBE")
+		case .RAW(let value):
+			return .custom(value)
+		}
 	}
 }

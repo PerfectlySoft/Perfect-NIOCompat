@@ -24,9 +24,9 @@ import class PerfectNIO.MimeReader
 /// Contains all HTTP header and content data submitted by the client.
 public protocol HTTPRequest: class {
 	/// The HTTP request method.
-	var method: HTTPMethod { get set }
+	var method: HTTPMethod { get }
 	/// The request path.
-	var path: String { get set }
+	var path: String { get }
 	/// Path components which may have been parsed during request reading.
 	/// Paths which end in a slash should have an empty component at the end of the array.
 	/// Since all paths are assumed to start with a slash, no empty leading component is included.
@@ -52,12 +52,6 @@ public protocol HTTPRequest: class {
 	var scratchPad: [String:Any] { get set }
 	/// Returns the requested incoming header value.
 	func header(_ named: HTTPRequestHeader.Name) -> String?
-	/// Add a header to the response.
-	/// No check for duplicate or repeated headers will be made.
-	func addHeader(_ named: HTTPRequestHeader.Name, value: String)
-	/// Set the indicated header value.
-	/// If the header already exists then the existing value will be replaced.
-	func setHeader(_ named: HTTPRequestHeader.Name, value: String)
 	/// Provide access to all current header values.
 	var headers: AnyIterator<(HTTPRequestHeader.Name, String)> { get }
 	

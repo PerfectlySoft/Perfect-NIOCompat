@@ -8,6 +8,7 @@
 
 import PerfectHTTPC
 import PerfectLib
+import PerfectThread
 import Foundation
 
 public struct TLSConfiguration {
@@ -197,11 +198,11 @@ public extension HTTPServer {
 	}
 	
 	public class LaunchContext {
-		
+		private let event = Threading.Event()
 		var error: Error?
 		public var terminated = false
 		public let server: Server
-		var httpServer: ServerInstance?
+		var httpServer: HTTPServer?
 		
 		var id: String { return "\(server.name):\(server.port)" }
 		
@@ -219,8 +220,29 @@ public extension HTTPServer {
 		
 		// if the ctx indicated an error then we translate it into a throw
 		@discardableResult
-		public func wait(seconds: Double = -1) throws -> Bool {
-			
+		public func wait(seconds: Double = Threading.noTimeout) throws -> Bool {
+			event.lock()
+			defer {
+				event.unlock()
+			}
+			if !terminated {
+				_ = event.wait(seconds: seconds)
+			}
+			if terminated, let error = self.error {
+				switch error {
+//				case PerfectNetError.networkError(let code, let msg):
+//					switch code {
+//					case 53:
+//						() // socket was closed. not an error
+//					case 48:
+//						throw LaunchFailure(message: "Server \(id) - Another server was already listening on the requested port \(server.port)", configuration: server)
+//					default:
+//						throw LaunchFailure(message: "Server \(id) - \(code):\(msg)", configuration: server)
+//					}
+				default:
+					throw LaunchFailure(message: "Server \(id) - \(error)", configuration: server)
+				}
+			}
 			return terminated
 		}
 		
@@ -231,7 +253,11 @@ public extension HTTPServer {
 			guard let httpServer = self.httpServer else {
 				throw LaunchFailure(message: "Could not get HTTPServer", configuration: server)
 			}
-			
+			do {
+				try httpServer.bind()
+			} catch {
+				throw LaunchFailure(message: "Server \(id) - \(error)", configuration: server)
+			}
 		}
 		
 		@discardableResult
@@ -239,7 +265,20 @@ public extension HTTPServer {
 			guard let httpServer = self.httpServer else {
 				throw LaunchFailure(message: "Could not get HTTPServer", configuration: server)
 			}
-			
+			let q = DispatchQueue(label: "Server \(id) \(Foundation.UUID().uuidString)")
+			q.async {
+				do {
+					try httpServer.start()
+				} catch {
+					self.error = error
+				}
+				self.event.lock()
+				defer {
+					self.event.unlock()
+				}
+				self.terminated = true
+				self.event.signal()
+			}
 			return self
 		}
 	}

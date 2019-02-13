@@ -1,6 +1,5 @@
 //
 //  HTTPMethod.swift
-//  PerfectLib
 //
 //  Created by Kyle Jessup on 2016-06-20.
 //	Copyright (C) 2016 PerfectlySoft, Inc.
