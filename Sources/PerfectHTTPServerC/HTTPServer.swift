@@ -36,28 +36,94 @@ class HTTP11Request: HTTPRequest {
 	}
 	let path: String
 	var pathComponents: [String] { return path.split(separator: "/").map(String.init) }
-	var queryParams: [(String, String)] = []
+	var queryParams: [(String, String)] {
+		guard let qd = master.searchArgs else {
+			return []
+		}
+		return qd.map { $0 }
+	}
 	var protocolVersion: (Int, Int) = (1, 1)
-	var remoteAddress: (host: String, port: UInt16) = ("", 0)
-	var serverAddress: (host: String, port: UInt16) = ("", 0)
+	
+	private func addrTup(_ addr: SocketAddress) -> (String, UInt16) {
+		switch addr {
+		case .v4(let v4):
+			return (v4.host, addr.port ?? 0)
+		case .v6(let v6):
+			return (v6.host, addr.port ?? 0)
+		case .unixDomainSocket(let u):
+			return ("\(u)", 0)
+		}
+	}
+	var remoteAddress: (host: String, port: UInt16) {
+		guard let addr = master.remoteAddress else {
+			return ("", 0)
+		}
+		return addrTup(addr)
+	}
+	var serverAddress: (host: String, port: UInt16) {
+		guard let addr = master.localAddress else {
+			return ("", 0)
+		}
+		return addrTup(addr)
+	}
 	var serverName: String = ""
 	var documentRoot: String = ""
 	var urlVariables: [String : String] = [:]
 	var scratchPad: [String : Any] = [:]
-	private var headerStore = Dictionary<HTTPRequestHeader.Name, [UInt8]>()
+	
 	var headers: AnyIterator<(HTTPRequestHeader.Name, String)> {
-		var g = headerStore.makeIterator()
+		var g = master.headers.makeIterator()
 		return AnyIterator<(HTTPRequestHeader.Name, String)> {
 			guard let n = g.next() else {
 				return nil
 			}
-			return (n.key, UTF8Encoding.encode(bytes: n.value))
+			return (HTTPRequestHeader.Name.fromStandard(name: n.name),
+					n.value)
 		}
 	}
-	var postParams: [(String, String)] = []
-	var postBodyBytes: [UInt8]? = nil
-	var postBodyString: String? = nil
-	var postFileUploads: [MimeReader.BodySpec]? = nil
+	
+	private var workingBuffer: [UInt8] = []
+	var mimes: MimeReader?
+	var postQueryDecoder: QueryDecoder?
+	
+	lazy var postParams: [(String, String)] = {
+		if let mime = mimes {
+			return mime.bodySpecs.filter { $0.file == nil }.map { ($0.fieldName, $0.fieldValue) }
+		} else if let qd = postQueryDecoder {
+			return qd.map { $0 }
+		}
+		return [(String, String)]()
+	}()
+	var postBodyBytes: [UInt8]? {
+		get {
+			if let _ = mimes {
+				return nil
+			}
+			return workingBuffer
+		}
+		set {
+			if let nv = newValue {
+				workingBuffer = nv
+			} else {
+				workingBuffer.removeAll()
+			}
+		}
+	}
+	var postBodyString: String? {
+		guard let bytes = postBodyBytes else {
+			return nil
+		}
+		if bytes.isEmpty {
+			return ""
+		}
+		return UTF8Encoding.encode(bytes: bytes)
+	}
+	var postFileUploads: [MimeReader.BodySpec]? {
+		guard let mimes = self.mimes else {
+			return nil
+		}
+		return mimes.bodySpecs
+	}
 	
 	init(master: PerfectNIO.HTTPRequest, path: String) {
 		self.master = master
@@ -65,27 +131,7 @@ class HTTP11Request: HTTPRequest {
 		self.path = path.hasPrefix("/") ? path : ("/" + path)
 	}
 	func header(_ named: HTTPRequestHeader.Name) -> String? {
-		guard let v = headerStore[named] else {
-			return nil
-		}
-		return UTF8Encoding.encode(bytes: v)
-	}
-	func addHeader(_ named: HTTPRequestHeader.Name, value: String) {
-		guard let existing = headerStore[named] else {
-			headerStore[named] = [UInt8](value.utf8)
-			return
-		}
-		let valueBytes = [UInt8](value.utf8)
-		let newValue: [UInt8]
-		if named == .cookie {
-			newValue = existing + "; ".utf8 + valueBytes
-		} else {
-			newValue = existing + ", ".utf8 + valueBytes
-		}
-		headerStore[named] = newValue
-	}
-	func setHeader(_ named: HTTPRequestHeader.Name, value: String) {
-		headerStore[named] = [UInt8](value.utf8)
+		return master.headers[named.standardName].first
 	}
 }
 
@@ -287,13 +333,29 @@ public class HTTPServer: ServerInstance {
 		}
 	}
 	
+	private func handleBody(_ request: HTTP11Request, _ body: HTTPRequestContentType) -> HTTP11Request {
+		switch body {
+		case .none:
+			()
+		case .multiPartForm(let m):
+			request.mimes = m
+		case .urlForm(let q):
+			request.postQueryDecoder = q
+		case .other(let b):
+			request.postBodyBytes = b
+		}
+		return request
+	}
+	
 	/// Bind the server to the designated address/port
 	public func bind() throws {
 		routeNavigator = routes.navigator
 		boundRoutes = try root()
 			.trailing(HTTP11Request.init)
+			.readBody(handleBody)
 			.async(runRequest)
-			.bind(port: Int(serverPort), address: serverAddress, tls: nil)
+			.bind(port: Int(serverPort),
+				  address: serverAddress, tls: nil)
 	}
 	
 	/// Start the server. Does not return until the server terminates.
