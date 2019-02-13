@@ -24,9 +24,9 @@ import class PerfectNIO.MimeReader
 /// Contains all HTTP header and content data submitted by the client.
 public protocol HTTPRequest: class {
 	/// The HTTP request method.
-	var method: HTTPMethod { get set }
+	var method: HTTPMethod { get }
 	/// The request path.
-	var path: String { get set }
+	var path: String { get }
 	/// Path components which may have been parsed during request reading.
 	/// Paths which end in a slash should have an empty component at the end of the array.
 	/// Since all paths are assumed to start with a slash, no empty leading component is included.
