@@ -57,14 +57,12 @@ public struct StaticFileHandler {
 	
 	let chunkedBufferSize = 1024*200
 	let documentRoot: String
-	let allowResponseFilters: Bool
 	
 	/// Public initializer given a document root.
 	/// If allowResponseFilters is false (which is the default) then the file will be sent in
 	/// the most effecient way possible and output filters will be bypassed.
 	public init(documentRoot: String, allowResponseFilters: Bool = false) {
 		self.documentRoot = documentRoot
-		self.allowResponseFilters = allowResponseFilters
 	}
 	
 	/// Main entry point. A registered URL handler should call this and pass the request and response objects.
@@ -94,7 +92,7 @@ public struct StaticFileHandler {
 		}
 		do {
 			try file.open(.read)
-			self.sendFile(request: request, response: response, file: file)
+			sendFile(request: request, response: response, file: file)
 		} catch {
 			return fnf(msg: "The file /\(path) could not be opened \(error).")
 		}
@@ -122,9 +120,9 @@ public struct StaticFileHandler {
 		response.addHeader(.acceptRanges, value: "bytes")
 		
 		if let rangeRequest = request.header(.range) {
-			return self.performRangeRequest(rangeRequest: rangeRequest, request: request, response: response, file: file)
+			return performRangeRequest(rangeRequest: rangeRequest, request: request, response: response, file: file)
 		} else if let ifNoneMatch = request.header(.ifNoneMatch) {
-			let eTag = self.getETag(file: file)
+			let eTag = getETag(file: file)
 			if ifNoneMatch == eTag {
 				response.status = .notModified
 				return response.next()
@@ -137,13 +135,13 @@ public struct StaticFileHandler {
 		response.status = .ok
 		response.addHeader(.contentType, value: contentType)
 		
-		if allowResponseFilters {
-			response.isStreaming = true
-		} else {
+//		if allowResponseFilters {
+//			response.isStreaming = true
+//		} else {
 			response.addHeader(.contentLength, value: "\(size)")
-		}
+//		}
 		
-		self.addETag(response: response, file: file)
+		addETag(response: response, file: file)
 		
 		if case .head = request.method {
 			return response.next()
@@ -165,7 +163,7 @@ public struct StaticFileHandler {
 	
 	func performRangeRequest(rangeRequest: String, request: HTTPRequest, response: HTTPResponse, file: File) {
 		let size = file.size
-		let ranges = self.parseRangeHeader(fromHeader: rangeRequest, max: size)
+		let ranges = parseRangeHeader(fromHeader: rangeRequest, max: size)
 		if ranges.count == 1 {
 			let range = ranges[0]
 			let rangeCount = range.count
@@ -212,7 +210,7 @@ public struct StaticFileHandler {
 	}
 	
 	func addETag(response: HTTPResponse, file: File) {
-		let eTag = self.getETag(file: file)
+		let eTag = getETag(file: file)
 		response.addHeader(.eTag, value: eTag)
 	}
 	
