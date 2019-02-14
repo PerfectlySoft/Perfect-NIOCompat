@@ -17,11 +17,19 @@
 //===----------------------------------------------------------------------===//
 //
 
+import PerfectLib
 import PerfectHTTPC
+import PerfectHTTPServerC
+import class PerfectNIO.WebSocketUpgradeHTTPOutput
+import protocol PerfectNIO.WebSocket
+
+typealias CompatWebSocket = PerfectNIO.WebSocket
 
 /// This class represents the communications channel for a WebSocket session.
 public class WebSocket: Equatable {
-
+	
+	let master: CompatWebSocket
+	
 	/// The various types of WebSocket messages.
 	public enum OpcodeType: UInt8 {
         /// Continuation op code
@@ -46,40 +54,82 @@ public class WebSocket: Equatable {
     /// Indicates if the socket is still likely connected or if it has been closed.
 	public var isConnected = false
 	
+	init(master: CompatWebSocket) {
+		self.master = master
+	}
+	
 	/// Close the connection.
 	public func close() {
-	
+		_ = master.writeMessage(.close)
 	}
 
 	/// Read string data from the client.
 	public func readStringMessage(continuation: @escaping (String?, _ opcode: OpcodeType, _ final: Bool) -> ()) {
-	
+		let p = master.readMessage()
+		p.whenSuccess {
+			msg in
+			switch msg {
+			case .close:
+				self.isConnected = false
+				continuation(nil, OpcodeType.close, true)
+			case .ping, .pong:
+				self.readStringMessage(continuation: continuation)
+			case .text(let t):
+				continuation(t, OpcodeType.text, true)
+			case .binary(let b):
+				continuation(UTF8Encoding.encode(bytes: b), OpcodeType.binary, true)
+			}
+		}
+		p.whenFailure {
+			_ in
+			_ = self.master.writeMessage(.close)
+			continuation(nil, OpcodeType.close, true)
+		}
 	}
 
 	/// Read binary data from the client.
 	public func readBytesMessage(continuation: @escaping ([UInt8]?, _ opcode: OpcodeType, _ final: Bool) -> ()) {
-	
+		let p = master.readMessage()
+		p.whenSuccess {
+			msg in
+			switch msg {
+			case .close:
+				self.isConnected = false
+				continuation(nil, OpcodeType.close, true)
+			case .ping, .pong:
+				self.readBytesMessage(continuation: continuation)
+			case .text(let t):
+				continuation(Array(t.utf8), OpcodeType.text, true)
+			case .binary(let b):
+				continuation(b, OpcodeType.binary, true)
+			}
+		}
+		p.whenFailure {
+			_ in
+			_ = self.master.writeMessage(.close)
+			continuation(nil, OpcodeType.close, true)
+		}
 	}
 
 	/// Send binary data to thew client.
 	public func sendBinaryMessage(bytes: [UInt8], final: Bool, completion: @escaping () -> ()) {
-	
+		master.writeMessage(.binary(bytes)).whenComplete(completion)
 	}
 
 	/// Send string data to the client.
 	public func sendStringMessage(string: String, final: Bool, completion: @escaping () -> ()) {
-	
+		master.writeMessage(.text(string)).whenComplete(completion)
 	}
 
 	/// Send a "pong" message to the client.
 	public func sendPong(completion: @escaping () -> ()) {
-	
+		master.writeMessage(.pong).whenComplete(completion)
 	}
 
 	/// Send a "ping" message to the client.
 	/// Expect a "pong" message to follow.
 	public func sendPing(completion: @escaping () -> ()) {
-	
+		master.writeMessage(.ping).whenComplete(completion)
 	}
 
 	/// implement Equatable protocol
@@ -115,6 +165,28 @@ public struct WebSocketHandler {
 
     /// Handle the request and negotiate the WebSocket session
 	public func handleRequest(request: HTTPRequest, response: HTTPResponse) {
-
+		guard let req11 = request as? HTTP11Request,
+			let resp11 = response as? HTTP11Response else {
+			return response.completed(status: .internalServerError)
+		}
+		let master = req11.master
+		resp11.proxy = WebSocketUpgradeHTTPOutput(request: master) {
+			socket in
+			let subSocket = WebSocket(master: socket)
+			let secWebSocketProtocol = request.header(.custom(name: "sec-websocket-protocol")) ?? ""
+			let protocolList = secWebSocketProtocol.split(separator: ",").compactMap {
+				i -> String? in
+				var s = String(i)
+				while s.count > 0 && s[s.startIndex] == " " {
+					s.remove(at: s.startIndex)
+				}
+				return s.count > 0 ? s : nil
+			}
+			let handler = self.handlerProducer(request, protocolList)
+			handler?.handleSession(request: request, socket: subSocket)
+		}
+		response.push {
+			ok in
+		}
 	}
 }

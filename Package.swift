@@ -40,7 +40,7 @@ let package = Package(
 						   "PerfectHTTPC"]),
 		.target(
 			name: "PerfectWebSocketsC",
-			dependencies: ["PerfectHTTPC"]),
+			dependencies: ["PerfectHTTPC", "PerfectHTTPServerC"]),
         .testTarget(
             name: "PerfectNIOCompatTests",
             dependencies: ["PerfectNIOCompat"]),

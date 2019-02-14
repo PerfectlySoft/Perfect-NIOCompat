@@ -28,21 +28,21 @@ import enum PerfectHTTPC.HTTPMethod
 import enum PerfectHTTPC.HTTPResponseStatus
 import struct PerfectHTTPC.Routes
 
-class HTTP11Request: HTTPRequest {
-	let master: PerfectNIO.HTTPRequest
+public final class HTTP11Request: HTTPRequest {
+	public let master: PerfectNIO.HTTPRequest
 	
-	var method: HTTPMethod {
+	public var method: HTTPMethod {
 		return master.method.compat
 	}
-	let path: String
-	var pathComponents: [String] { return path.split(separator: "/").map(String.init) }
-	var queryParams: [(String, String)] {
+	public let path: String
+	public var pathComponents: [String] { return ["/"] + path.split(separator: "/").map(String.init) }
+	public var queryParams: [(String, String)] {
 		guard let qd = master.searchArgs else {
 			return []
 		}
 		return qd.map { $0 }
 	}
-	var protocolVersion: (Int, Int) = (1, 1)
+	public var protocolVersion: (Int, Int) = (1, 1)
 	
 	private func addrTup(_ addr: SocketAddress) -> (String, UInt16) {
 		switch addr {
@@ -54,24 +54,24 @@ class HTTP11Request: HTTPRequest {
 			return ("\(u)", 0)
 		}
 	}
-	var remoteAddress: (host: String, port: UInt16) {
+	public var remoteAddress: (host: String, port: UInt16) {
 		guard let addr = master.remoteAddress else {
 			return ("", 0)
 		}
 		return addrTup(addr)
 	}
-	var serverAddress: (host: String, port: UInt16) {
+	public var serverAddress: (host: String, port: UInt16) {
 		guard let addr = master.localAddress else {
 			return ("", 0)
 		}
 		return addrTup(addr)
 	}
-	var serverName: String = ""
-	var documentRoot: String = ""
-	var urlVariables: [String : String] = [:]
-	var scratchPad: [String : Any] = [:]
+	public var serverName: String = ""
+	public var documentRoot: String = "./webroot"
+	public var urlVariables: [String : String] = [:]
+	public var scratchPad: [String : Any] = [:]
 	
-	var headers: AnyIterator<(HTTPRequestHeader.Name, String)> {
+	public var headers: AnyIterator<(HTTPRequestHeader.Name, String)> {
 		var g = master.headers.makeIterator()
 		return AnyIterator<(HTTPRequestHeader.Name, String)> {
 			guard let n = g.next() else {
@@ -86,7 +86,7 @@ class HTTP11Request: HTTPRequest {
 	var mimes: MimeReader?
 	var postQueryDecoder: QueryDecoder?
 	
-	lazy var postParams: [(String, String)] = {
+	public lazy var postParams: [(String, String)] = {
 		if let mime = mimes {
 			return mime.bodySpecs.filter { $0.file == nil }.map { ($0.fieldName, $0.fieldValue) }
 		} else if let qd = postQueryDecoder {
@@ -94,7 +94,7 @@ class HTTP11Request: HTTPRequest {
 		}
 		return [(String, String)]()
 	}()
-	var postBodyBytes: [UInt8]? {
+	public var postBodyBytes: [UInt8]? {
 		get {
 			if let _ = mimes {
 				return nil
@@ -109,7 +109,7 @@ class HTTP11Request: HTTPRequest {
 			}
 		}
 	}
-	var postBodyString: String? {
+	public var postBodyString: String? {
 		guard let bytes = postBodyBytes else {
 			return nil
 		}
@@ -118,7 +118,7 @@ class HTTP11Request: HTTPRequest {
 		}
 		return UTF8Encoding.encode(bytes: bytes)
 	}
-	var postFileUploads: [MimeReader.BodySpec]? {
+	public var postFileUploads: [MimeReader.BodySpec]? {
 		guard let mimes = self.mimes else {
 			return nil
 		}
@@ -130,13 +130,14 @@ class HTTP11Request: HTTPRequest {
 		print("HTTP11Request path \(path)")
 		self.path = path.hasPrefix("/") ? path : ("/" + path)
 	}
-	func header(_ named: HTTPRequestHeader.Name) -> String? {
+	public func header(_ named: HTTPRequestHeader.Name) -> String? {
 		return master.headers[named.standardName].first
 	}
 }
 
-class HTTP11Response: HTTPOutput, HTTPResponse {
-	let request: HTTPRequest
+public final class HTTP11Response: HTTPOutput, HTTPResponse {
+	public let request: HTTPRequest
+	public var proxy: HTTPOutput?
 	
 	var headPromise: EventLoopPromise<HTTPOutput>?
 	var bodyPromise: EventLoopPromise<IOData?>?
@@ -144,11 +145,11 @@ class HTTP11Response: HTTPOutput, HTTPResponse {
 	var pushCallback: ((Bool) -> ())?
 	var hasCompleted = false
 	
-	var status: HTTPResponseStatus = .ok
-	var isStreaming: Bool = false
-	var bodyBytes: [UInt8] = []
+	public var status: HTTPResponseStatus = .ok
+	public var isStreaming: Bool = false
+	public var bodyBytes: [UInt8] = []
 	var headerStore = Array<(HTTPResponseHeader.Name, String)>()
-	var headers: AnyIterator<(HTTPResponseHeader.Name, String)> {
+	public var headers: AnyIterator<(HTTPResponseHeader.Name, String)> {
 		var g = headerStore.makeIterator()
 		return AnyIterator<(HTTPResponseHeader.Name, String)> {
 			g.next()
@@ -160,12 +161,18 @@ class HTTP11Response: HTTPOutput, HTTPResponse {
 		self.headPromise = promise
 	}
 	
-	override func head(request: HTTPRequestInfo) -> HTTPHead? {
+	public override func head(request: HTTPRequestInfo) -> HTTPHead? {
+		if let p = proxy {
+			return p.head(request: request)
+		}
 		let headers = HTTPHeaders(headerStore.map { ($0.0.standardName, $0.1) })
 		let nstatus = NIOHTTP1.HTTPResponseStatus(statusCode: status.code)
 		return HTTPHead(status: nstatus, headers: headers)
 	}
-	override func body(promise: EventLoopPromise<IOData?>, allocator: ByteBufferAllocator) {
+	public override func body(promise: EventLoopPromise<IOData?>, allocator: ByteBufferAllocator) {
+		if let p = proxy {
+			return p.body(promise: promise, allocator: allocator)
+		}
 		if let pcb = pushCallback {
 			pushCallback = nil
 			// push/completed has been called
@@ -193,7 +200,7 @@ class HTTP11Response: HTTPOutput, HTTPResponse {
 			bodyAllocator = allocator
 		}
 	}
-	func push(callback: @escaping (Bool) -> ()) {
+	public func push(callback: @escaping (Bool) -> ()) {
 		pushCallback = callback
 		if let hp = headPromise {
 			// head has not been sent yet
@@ -211,14 +218,14 @@ class HTTP11Response: HTTPOutput, HTTPResponse {
 		}
 	}
 	
-	func header(_ named: HTTPResponseHeader.Name) -> String? {
+	public func header(_ named: HTTPResponseHeader.Name) -> String? {
 		for (n, v) in headerStore where n == named {
 			return v
 		}
 		return nil
 	}
 	@discardableResult
-	func addHeader(_ name: HTTPResponseHeader.Name, value: String) -> Self {
+	public func addHeader(_ name: HTTPResponseHeader.Name, value: String) -> Self {
 		headerStore.append((name, value))
 		if case .contentLength = name {
 //			contentLengthSet = true
@@ -226,7 +233,7 @@ class HTTP11Response: HTTPOutput, HTTPResponse {
 		return self
 	}
 	@discardableResult
-	func setHeader(_ name: HTTPResponseHeader.Name, value: String) -> Self {
+	public func setHeader(_ name: HTTPResponseHeader.Name, value: String) -> Self {
 		var fi = [Int]()
 		for i in 0..<headerStore.count {
 			let (n, _) = headerStore[i]
@@ -240,14 +247,14 @@ class HTTP11Response: HTTPOutput, HTTPResponse {
 		}
 		return addHeader(name, value: value)
 	}
-	func next() {
+	public func next() {
 		if let n = handlers?.next() {
 			n(request, self)
 		} else {
 			completed()
 		}
 	}
-	func completed() {
+	public func completed() {
 		hasCompleted = true
 		push {
 			_ in
