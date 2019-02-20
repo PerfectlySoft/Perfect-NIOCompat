@@ -136,9 +136,9 @@ public struct StaticFileHandler {
 		response.addHeader(.contentType, value: contentType)
 		
 //		if allowResponseFilters {
-//			response.isStreaming = true
+			response.isStreaming = true
 //		} else {
-			response.addHeader(.contentLength, value: "\(size)")
+//			response.addHeader(.contentLength, value: "\(size)")
 //		}
 		
 		addETag(response: response, file: file)
