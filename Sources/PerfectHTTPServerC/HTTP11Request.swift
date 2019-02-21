@@ -112,7 +112,6 @@ public final class HTTP11Request: HTTPRequest {
 	
 	init(master: PerfectNIO.HTTPRequest, path: String) {
 		self.master = master
-		print("HTTP11Request path \(path)")
 		self.path = path.hasPrefix("/") ? path : ("/" + path)
 	}
 	public func header(_ named: HTTPRequestHeader.Name) -> String? {
