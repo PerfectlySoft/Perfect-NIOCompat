@@ -13,7 +13,8 @@ import protocol PerfectHTTPC.HTTPRequest
 import enum PerfectHTTPC.HTTPResponseStatus
 
 public final class HTTP11Response: HTTPOutput, HTTPResponse {
-	public let request: HTTPRequest
+	var requestP: HTTPRequest?
+	public var request: HTTPRequest { return requestP! }
 	public var proxy: HTTPOutput?
 	
 	var headPromise: EventLoopPromise<HTTPOutput>?
@@ -36,11 +37,23 @@ public final class HTTP11Response: HTTPOutput, HTTPResponse {
 	let responseFilters: [[HTTPResponseFilter]]
 	
 	init(request: HTTPRequest, responseFilters: [[HTTPResponseFilter]], promise: EventLoopPromise<HTTPOutput>) {
-		self.request = request
+		self.requestP = request
 		self.responseFilters = responseFilters
 		self.headPromise = promise
 	}
-	
+	deinit {
+//		print("~HTTP11Response")
+	}
+	public override func closed() {
+		super.closed()
+		proxy = nil
+		if let p = pushCallback {
+			pushCallback = nil
+			p(false)
+		}
+		(requestP as? HTTP11Request)?.masterP = nil
+		requestP = nil
+	}
 	public override func head(request: HTTPRequestInfo) -> HTTPHead? {
 		if let p = proxy {
 			return p.head(request: request)
@@ -107,6 +120,7 @@ public final class HTTP11Response: HTTPOutput, HTTPResponse {
 				promise.succeed(result: .byteBuffer(b))
 			} else if hasCompleted {
 				promise.succeed(result: nil)
+				pcb(true)
 			} else {
 				// no data but push was called
 				// wait for another push/completed
@@ -123,6 +137,9 @@ public final class HTTP11Response: HTTPOutput, HTTPResponse {
 		}
 	}
 	public func push(callback: @escaping (Bool) -> ()) {
+		if nil == requestP {
+			return callback(false)
+		}
 		pushCallback = callback
 		if let hp = headPromise {
 			// head has not been sent yet
@@ -150,7 +167,7 @@ public final class HTTP11Response: HTTPOutput, HTTPResponse {
 	public func addHeader(_ name: HTTPResponseHeader.Name, value: String) -> Self {
 		headerStore.append((name, value))
 		if case .contentLength = name {
-			//			contentLengthSet = true
+//			contentLengthSet = true
 		}
 		return self
 	}
@@ -181,9 +198,9 @@ public final class HTTP11Response: HTTPOutput, HTTPResponse {
 			return
 		}
 		hasCompleted = true
-		push {
+		push { [weak self]
 			_ in
-			
+			self?.closed()
 		}
 	}
 }

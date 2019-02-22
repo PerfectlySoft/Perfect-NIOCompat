@@ -14,7 +14,8 @@ import protocol PerfectHTTPC.HTTPRequest
 import enum PerfectHTTPC.HTTPMethod
 
 public final class HTTP11Request: HTTPRequest {
-	public let master: PerfectNIO.HTTPRequest
+	var masterP: PerfectNIO.HTTPRequest?
+	public var master: PerfectNIO.HTTPRequest { return masterP! }
 	
 	public var method: HTTPMethod {
 		return master.method.compat
@@ -111,8 +112,11 @@ public final class HTTP11Request: HTTPRequest {
 	}
 	
 	init(master: PerfectNIO.HTTPRequest, path: String) {
-		self.master = master
+		self.masterP = master
 		self.path = path.hasPrefix("/") ? path : ("/" + path)
+	}
+	deinit {
+//		print("~HTTP11Request")
 	}
 	public func header(_ named: HTTPRequestHeader.Name) -> String? {
 		return master.headers[named.standardName].first
