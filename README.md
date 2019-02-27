@@ -1,9 +1,15 @@
 # Perfect-NIOCompat
 Perfect 3 -> 4 compatability 
 
+This package provides compatability for Perfect 3 apps to run on Perfect 4 NIO with minimal changes.
+
 In Package.swift:
 
+Add:
+
 `.package(url: "https://github.com/PerfectlySoft/Perfect-NIOCompat.git", .branch("master"))`
+
+Remove:
 
 <strike>`.package(url: "https://github.com/PerfectlySoft/Perfect-HTTP.git", ...`</strike>
 
@@ -13,11 +19,21 @@ In Package.swift:
 
 <strike>`.package(url: "https://github.com/PerfectlySoft/Perfect-WebSockets.git", ...`</strike>
 
-Use PerfectCURL, PerfectSMTP, PerfectNotifications `from: "4.0.0"`
+Compatability for the four packages above are included herein.
+
+<hr>
+
+If you are using PerfectCURL, PerfectSMTP, or PerfectNotifications, make sure the version is `from: "4.0.0"`.
+
+<hr>
 
 In source files:
 
+Add:
+
 `import PerfectNIOCompat`
+
+Remove:
 
 <strike>import PerfectHTTP</strike>
 
@@ -26,6 +42,10 @@ In source files:
 <strike>import PerfectMustache</strike>
 
 <strike>import PerfectWebSockets</strike>
+
+<hr>
+
+The following is no longer supported:
 
 No access to raw connection
 
