@@ -113,23 +113,23 @@ public class WebSocket: Equatable {
 
 	/// Send binary data to thew client.
 	public func sendBinaryMessage(bytes: [UInt8], final: Bool, completion: @escaping () -> ()) {
-		master.writeMessage(.binary(bytes)).whenComplete(completion)
+		master.writeMessage(.binary(bytes)).whenComplete({_ in completion()})
 	}
 
 	/// Send string data to the client.
 	public func sendStringMessage(string: String, final: Bool, completion: @escaping () -> ()) {
-		master.writeMessage(.text(string)).whenComplete(completion)
+		master.writeMessage(.text(string)).whenComplete({_ in completion()})
 	}
 
 	/// Send a "pong" message to the client.
 	public func sendPong(completion: @escaping () -> ()) {
-		master.writeMessage(.pong).whenComplete(completion)
+		master.writeMessage(.pong).whenComplete({_ in completion()})
 	}
 
 	/// Send a "ping" message to the client.
 	/// Expect a "pong" message to follow.
 	public func sendPing(completion: @escaping () -> ()) {
-		master.writeMessage(.ping).whenComplete(completion)
+		master.writeMessage(.ping).whenComplete({_ in completion()})
 	}
 
 	/// implement Equatable protocol

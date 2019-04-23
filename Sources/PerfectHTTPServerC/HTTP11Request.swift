@@ -33,9 +33,9 @@ public final class HTTP11Request: HTTPRequest {
 	private func addrTup(_ addr: SocketAddress) -> (String, UInt16) {
 		switch addr {
 		case .v4(let v4):
-			return (v4.host, addr.port ?? 0)
+			return (v4.host, UInt16(addr.port ?? 0))
 		case .v6(let v6):
-			return (v6.host, addr.port ?? 0)
+			return (v6.host, UInt16(addr.port ?? 0))
 		case .unixDomainSocket(let u):
 			return ("\(u)", 0)
 		}

@@ -274,6 +274,8 @@ extension PerfectNIO.HTTPMethod {
 			return .custom("MKACTIVITY")
 		case .UNSUBSCRIBE:
 			return .custom("UNSUBSCRIBE")
+		case .SOURCE:
+			return .custom("SOURCE")
 		case .RAW(let value):
 			return .custom(value)
 		}

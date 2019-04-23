@@ -113,13 +113,13 @@ public final class HTTP11Response: HTTPOutput, HTTPResponse {
 			// push/completed has been called
 			if !bodyBytes.isEmpty {
 				var b = allocator.buffer(capacity: bodyBytes.count)
-				b.write(bytes: bodyBytes)
+				b.writeBytes(bodyBytes)
 				bodyBytes.removeAll()
 				promise.futureResult.whenSuccess { _ in pcb(true) }
 				promise.futureResult.whenFailure { _ in pcb(false) }
-				promise.succeed(result: .byteBuffer(b))
+				promise.succeed(.byteBuffer(b))
 			} else if hasCompleted {
-				promise.succeed(result: nil)
+				promise.succeed(nil)
 				pcb(true)
 			} else {
 				// no data but push was called
@@ -129,7 +129,7 @@ public final class HTTP11Response: HTTPOutput, HTTPResponse {
 				pcb(true)
 			}
 		} else if hasCompleted {
-			promise.succeed(result: nil)
+			promise.succeed(nil)
 		} else {
 			// wait for push/completed
 			bodyPromise = promise
@@ -145,7 +145,7 @@ public final class HTTP11Response: HTTPOutput, HTTPResponse {
 			// head has not been sent yet
 			headPromise = nil
 			// body will be called to finish up
-			hp.succeed(result: self)
+			hp.succeed(self)
 		} else if let bp = bodyPromise, let a = bodyAllocator {
 			// head has been sent
 			// body was requested
