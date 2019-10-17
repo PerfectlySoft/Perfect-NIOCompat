@@ -149,8 +149,7 @@ public class HTTPServer: ServerInstance {
 			.trailing(HTTP11Request.init)
 			.readBody(handleBody)
 			.async(runRequest)
-			.bind(port: Int(serverPort),
-				  address: serverAddress, tls: nil)
+			.bind(address: SocketAddress(ipAddress: serverAddress, port: Int(serverPort)), tls: nil)
 	}
 	
 	/// Start the server. Does not return until the server terminates.
